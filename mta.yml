@@ -1,0 +1,50 @@
+version: "1.0"
+service: "email"
+system_id: "corp-mail"
+
+# Ingress & Protocols
+protocols:
+  smtp:
+    listen: ["0.0.0.0:25", "0.0.0.0:587", "0.0.0.0:465"]
+    auth_required_ports: [587, 465]
+  imap:
+    listen: ["0.0.0.0:993"]
+    tls_required: true
+
+# Identity & Authentication Backend
+auth_backend:
+  type: "ldap" # ldap | sql | static
+  ldap_uri: "ldap://10.0.0.10:389"
+  base_dn: "ou=people,dc=example,dc=com"
+  bind_dn: "cn=mailsearch,dc=example,dc=com"
+
+# Storage & Mail Delivery Agent (MDA)
+storage:
+  format: "maildir" # maildir | sdbox | mdbox
+  path: "/var/vmail/{domain}/{user}"
+  quota:
+    default: "10GB"
+    per_user_override: true
+
+# Mailbox Domains & Aliases
+domains:
+  - name: "example.com"
+    dkim:
+      selector: "mail"
+      private_key_path: "/etc/mail/dkim/example.com.key"
+    catch_all: null
+    aliases:
+      - source: "support@example.com"
+        destination: ["agent1@example.com", "agent2@example.com"]
+      - source: "devnull@example.com"
+        destination: ["/dev/null"]
+
+# Pipeline & Policy Filtering
+pipeline:
+  antispam:
+    engine: "rspamd"
+    action_threshold:
+      add_header: 6.0
+      reject: 15.0
+  rate_limits:
+    outbound_per_user_hour: 250

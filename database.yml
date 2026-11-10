@@ -1,0 +1,137 @@
+version: "1.0"
+service: "database"
+system_id: "core-db-cluster"
+
+# ==============================================================================
+# 1. TOPOLOGY & HIGH AVAILABILITY INTENT
+# ==============================================================================
+topology:
+  engine_family: "relational" # relational | document | timeseries | keyvalue
+  architecture: "leader_follower" # standalone | leader_follower | active_active | sharded
+  
+  nodes:
+    - id: "db-node-primary"
+      role: "leader"
+      listen:
+        address: "0.0.0.0"
+        port: 5432
+      allow_writes: true
+
+    - id: "db-node-replica-1"
+      role: "follower"
+      listen:
+        address: "0.0.0.0"
+        port: 5432
+      sync_from: "db-node-primary"
+      allow_writes: false
+
+  replication:
+    mode: "streaming" # streaming | logical | snapshot
+    sync_policy: "asynchronous" # synchronous | asynchronous | semi_sync
+    auto_failover:
+      enabled: true
+      consensus_provider: "etcd" # etcd | raft | external
+
+# ==============================================================================
+# 2. LOGICAL DATABASES / CATALOGS
+# ==============================================================================
+catalogs:
+  - name: "app_production"
+    owner: "app_user"
+    encoding: "UTF8"
+    locale: "en_US.UTF-8"
+    extensions:
+      - "uuid-ossp"
+      - "pg_trgm"
+      - "postgis"
+
+  - name: "analytics_reporting"
+    owner: "analytics_user"
+    encoding: "UTF8"
+    locale: "en_US.UTF-8"
+
+# ==============================================================================
+# 3. IDENTITY, ROLES & PRIVILEGES (GRANTS)
+# ==============================================================================
+users:
+  - username: "app_user"
+    auth:
+      type: "scram_sha_256" # scram_sha_256 | mysql_native | tls_cert
+      secret_ref: "vault:/secrets/db/app_user" # Decoupled secret
+    connection_limit: 100
+    roles: ["application_role"]
+
+  - username: "readonly_reporter"
+    auth:
+      type: "scram_sha_256"
+      secret_ref: "vault:/secrets/db/reporter"
+    connection_limit: 20
+    roles: ["read_only_role"]
+
+roles:
+  - name: "application_role"
+    grants:
+      - catalog: "app_production"
+        schema: "public"
+        privileges: ["SELECT", "INSERT", "UPDATE", "DELETE"]
+        apply_to_future_tables: true
+
+  - name: "read_only_role"
+    grants:
+      - catalog: "app_production"
+        schema: "public"
+        privileges: ["SELECT"]
+        apply_to_future_tables: true
+      - catalog: "analytics_reporting"
+        schema: "public"
+        privileges: ["SELECT"]
+        apply_to_future_tables: true
+
+# ==============================================================================
+# 4. CONNECTION POOLING & INGRESS CONTROL (HBA / FIREWALL)
+# ==============================================================================
+network_access_control:
+  - type: "host"
+    database: "all"
+    user: "all"
+    source_cidr: "127.0.0.1/32"
+    method: "trust"
+
+  - type: "hostssl"
+    database: "app_production"
+    user: "app_user"
+    source_cidr: "10.0.1.0/24" # App tier subnet
+    method: "scram_sha_256"
+
+  - type: "reject"
+    database: "all"
+    user: "all"
+    source_cidr: "0.0.0.0/0"
+    method: "reject"
+
+pooling:
+  enabled: true
+  mode: "transaction" # session | transaction | statement
+  pool_size: 25
+  max_client_connections: 500
+  idle_timeout: 300s
+
+# ==============================================================================
+# 5. RETENTION, BACKUPS & MAINTENANCE
+# ==============================================================================
+maintenance:
+  wal_archiving:
+    enabled: true
+    destination: "s3://backups/wal/core-db/"
+    compression: "zstd"
+
+  snapshots:
+    frequency: "daily"
+    at: "02:00:00"
+    retention_days: 30
+    storage_target: "s3://backups/snapshots/core-db/"
+
+  audit_logging:
+    enabled: true
+    statements: ["ddl", "role_changes"] # all | ddl | modifications | none
+    log_duration: true

@@ -1,0 +1,26 @@
+version: "1.0"
+service: "dns_cluster"
+cluster_id: "global-dns"
+
+topology:
+  sync_strategy: "native_axfr" # native_axfr | distributed_kv | database_replication
+  # If distributed_kv (e.g., CoreDNS + etcd / Consul):
+  # kv_endpoints: ["10.0.1.10:2379", "10.0.1.11:2379"]
+
+nodes:
+  - id: "ns1-primary"
+    role: "primary" # primary | secondary | stealth_master
+    listen_ip: "198.51.100.1"
+    allow_transfer_to: ["ns2-secondary", "ns3-secondary"]
+    notify_nodes: ["ns2-secondary", "ns3-secondary"]
+
+  - id: "ns2-secondary"
+    role: "secondary"
+    listen_ip: "198.51.100.2"
+    sync_from: "ns1-primary"
+
+# Anycast routing setup (if utilizing BGP VIP across instances)
+anycast:
+  enabled: true
+  virtual_ip: "198.51.100.53"
+  bgp_asn: 64512

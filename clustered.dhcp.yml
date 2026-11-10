@@ -1,0 +1,25 @@
+version: "1.0"
+service: "dhcp_ha"
+cluster_id: "office-dhcp-cluster"
+
+ha_mode: "hot_standby" # hot_standby | load_balance | shared_backend
+
+nodes:
+  - id: "dhcp-node-1"
+    role: "primary"
+    peer_address: "192.168.10.3"
+    listen_interface: "eth0"
+    split_percentage: 50 # Relevant for load_balance mode
+
+  - id: "dhcp-node-2"
+    role: "secondary"
+    peer_address: "192.168.10.2"
+    listen_interface: "eth0"
+
+coordination:
+  heartbeat_interval: 10s
+  max_unacked_updates: 10
+  max_response_delay: 60s
+  # For modern shared lease DBs (Kea with MySQL/PostgreSQL backend)
+  lease_backend:
+    type: "in_memory_ha" # in_memory_ha | postgres_replicated | mysql_galera

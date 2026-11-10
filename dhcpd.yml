@@ -1,0 +1,76 @@
+version: "1.0"
+service: "dhcp"
+
+# ==============================================================================
+# GLOBAL LEASE & SERVER OPTIONS
+# ==============================================================================
+global_options:
+  authoritative: true
+  ddns:
+    enabled: true
+    server: "10.0.0.2"
+    zone: "corp.example.com"
+    update_type: "both" # standard forward+reverse update
+  default_lease_time: 86400 # 24 hours
+  max_lease_time: 172800     # 48 hours
+
+# ==============================================================================
+# SHARED NETWORKS & SUBNETS (IPv4 & IPv6)
+# ==============================================================================
+shared_networks:
+  - id: "office-network"
+    subnets:
+      - id: "vlan-10-workstations"
+        cidr: "192.168.10.0/24"
+        interface: "eth0.10" # physical or logical binding
+
+        # IP Allocation Ranges
+        pools:
+          - range: ["192.168.10.100", "192.168.10.200"]
+            client_class: "general"
+          - range: ["192.168.10.210", "192.168.10.250"]
+            client_class: "guest"
+
+        # Standard Network Options
+        options:
+          routers: ["192.168.10.1"]
+          subnet_mask: "255.255.255.0"
+          broadcast_address: "192.168.10.255"
+          dns_servers: ["192.168.10.2", "1.1.1.1"]
+          domain_name: "office.example.com"
+          domain_search: ["office.example.com", "example.com"]
+          ntp_servers: ["192.168.10.1"]
+
+        # PXE / Network Booting (TFTP)
+        boot:
+          tftp_server_name: "192.168.10.5"
+          boot_file_name: "pxelinux.0"
+          next_server: "192.168.10.5"
+
+        # Static Host Reservations (MAC-based IP binding)
+        static_reservations:
+          - hostname: "reception-printer"
+            mac: "00:11:22:33:44:55"
+            ip: "192.168.10.20"
+            options:
+              dns_servers: ["192.168.10.2"]
+          - hostname: "vip-conference-room"
+            mac: "aa:bb:cc:dd:ee:ff"
+            ip: "192.168.10.21"
+
+      - id: "vlan-20-voip"
+        cidr: "192.168.20.0/24"
+        interface: "eth0.20"
+        pools:
+          - range: ["192.168.20.50", "192.168.20.250"]
+        options:
+          routers: ["192.168.20.1"]
+          dns_servers: ["192.168.10.2"]
+          # Custom vendor options (e.g., Option 66 / 150 for TFTP voice config)
+          custom_options:
+            - code: 66
+              type: "string"
+              value: "http://provisioning.voice.example.com"
+            - code: 150
+              type: "ip-address"
+              value: "192.168.20.5"

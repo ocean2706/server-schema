@@ -1,0 +1,242 @@
+version: "1.0"
+site_id: "saas-app-prod"
+enabled: true
+
+# ==============================================================================
+# 1. INGRESS, IDENTITY & NETWORK BINDINGS
+# ==============================================================================
+ingress:
+  domains:
+    primary: "example.com"
+    aliases:
+      - "www.example.com"
+      - "*.preview.example.com" # Wildcard support
+  listeners:
+    - address: "0.0.0.0"
+      port: 80
+      protocol: "http"
+      scheme_policy: "force_https" # force_https | allow | reject
+    - address: "0.0.0.0"
+      port: 443
+      protocol: "https"
+      http2: true
+      http3_quic: false
+
+# ==============================================================================
+# 2. TLS / SSL SPECIFICATION
+# ==============================================================================
+tls:
+  mode: "acme" # acme | manual | off
+  acme:
+    provider: "letsencrypt"
+    challenge: "http-01" # http-01 | dns-01
+    email: "ops@example.com"
+  manual:
+    cert_path: "/etc/ssl/certs/example.com.crt"
+    key_path: "/etc/ssl/private/example.com.key"
+    chain_path: "/etc/ssl/certs/chain.crt"
+  min_version: "TLSv1.2" # TLSv1.2 | TLSv1.3
+  alpn: ["h2", "http/1.1"]
+  hsts:
+    enabled: true
+    max_age: 31536000
+    include_subdomains: true
+    preload: false
+
+# ==============================================================================
+# 3. GLOBAL POLICIES (Evaluated before route dispatch)
+# ==============================================================================
+global_policies:
+  limits:
+    max_body_size: "64MB"
+    rate_limit:
+      key: "$client_ip"
+      rate: "100r/s"
+      burst: 50
+      status_code: 429
+  cors:
+    allow_origins: ["https://admin.example.com"]
+    allow_methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"]
+    allow_headers: ["Authorization", "Content-Type", "X-Requested-With"]
+    allow_credentials: true
+    max_age: 86400
+  headers_mutation:
+    request:
+      set:
+        X-Forwarded-Proto: "{scheme}"
+        X-Real-IP: "{client_ip}"
+      remove:
+        - "X-Powered-By"
+    response:
+      set:
+        X-Frame-Options: "DENY"
+        X-Content-Type-Options: "nosniff"
+        Referrer-Policy: "strict-origin-when-cross-origin"
+
+# ==============================================================================
+# 4. CANONICALIZATION, GLOBAL REDIRECTS & NORMALIZATION
+# ==============================================================================
+normalization:
+  trailing_slash: "strip" # strip | enforce | ignore
+  strip_www: false        # enforce canonical www or root
+  force_www: false
+  custom_redirects:
+    - match:
+        type: "regex" # exact | prefix | regex
+        pattern: "^/blog/(.*)$"
+      target: "https://blog.example.com/{1}"
+      code: 301
+      preserve_query: true
+
+# ==============================================================================
+# 5. ORDERED ROUTE DISPATCH PIPELINE
+# (Evaluated top-to-bottom. First match wins, or falls through by route rule)
+# ==============================================================================
+routes:
+
+  # ----------------------------------------------------------------------------
+  # ROUTE A: SPA Fallback with Internal Rewrite (Classic try_files / RewriteCond)
+  # ----------------------------------------------------------------------------
+  - id: "spa-dashboard"
+    match:
+      path:
+        type: "prefix"
+        value: "/dashboard"
+      methods: ["GET", "HEAD"]
+    
+    # Internal Rewrites (URL mutation without changing browser address bar)
+    rewrites:
+      # If requested path is not an existing file or directory, rewrite to index.html
+      fallback_to:
+        test_filesystem: true
+        try_files:
+          - "{request_uri}"
+          - "{request_uri}/"
+          - "/dashboard/index.html"
+
+    handler:
+      type: "static"
+      static:
+        root: "/var/www/dashboard/dist"
+        browse: false
+        clean_urls: true
+        caching:
+          policy: "custom"
+          max_age: 0
+          directives: ["no-cache", "must-revalidate"]
+
+  # ----------------------------------------------------------------------------
+  # ROUTE B: Dynamic PHP-FPM / FastCGI (Direct script execution)
+  # ----------------------------------------------------------------------------
+  - id: "legacy-app"
+    match:
+      path:
+        type: "regex"
+        value: "^/(api|admin)/.*\\.php(/.*)?$"
+    
+    security:
+      auth_basic:
+        enabled: true
+        realm: "Admin Only"
+        htpasswd_path: "/etc/nginx/.htpasswd"
+      ip_whitelist:
+        - "10.0.0.0/8"
+        - "192.168.1.50"
+
+    handler:
+      type: "fastcgi"
+      fastcgi:
+        socket: "unix:/run/php/php8.3-fpm.sock" # or "tcp://127.0.0.1:9000"
+        root: "/var/www/legacy/public"
+        split_path_info: "^(.+?\\.php)(/.*)$"
+        index: "index.php"
+        env_params:
+          APP_ENV: "production"
+          SCRIPT_FILENAME: "{document_root}{fastcgi_script_name}"
+        timeouts:
+          read: 120s
+          send: 60s
+
+  # ----------------------------------------------------------------------------
+  # ROUTE C: Reverse Proxy with Path Stripping, Buffering & WebSockets
+  # ----------------------------------------------------------------------------
+  - id: "backend-api"
+    match:
+      path:
+        type: "prefix"
+        value: "/v2/api"
+      headers:
+        - name: "X-Beta-Tester"
+          type: "exact"
+          value: "true"
+
+    # URL prefix rewriting before dispatching upstream
+    rewrites:
+      strip_prefix: "/v2/api" # turns /v2/api/users -> /users for backend
+
+    handler:
+      type: "proxy"
+      proxy:
+        upstreams:
+          balance_algorithm: "round_robin" # round_robin | ip_hash | least_conn
+          targets:
+            - address: "10.0.1.10:8080"
+              weight: 3
+            - address: "10.0.1.11:8080"
+              weight: 1
+        protocol: "http/1.1" # http/1.1 | h2c | grpc
+        websocket: true
+        pass_host_header: true
+        buffering:
+          request_buffering: false # Useful for large uploads
+          response_buffering: true
+        timeouts:
+          connect: 5s
+          read: 30s
+          send: 30s
+
+  # ----------------------------------------------------------------------------
+  # ROUTE D: Static Assets with Content Hashing & Long Expiry
+  # ----------------------------------------------------------------------------
+  - id: "static-assets"
+    match:
+      path:
+        type: "regex"
+        value: "^/(assets|static)/.*\\.(js|css|png|jpg|webp|svg|woff2)$"
+    
+    compression:
+      gzip: true
+      brotli: true
+    
+    handler:
+      type: "static"
+      static:
+        root: "/var/www/static"
+        caching:
+          policy: "immutable"
+          max_age: 31536000 # 1 year
+
+# ==============================================================================
+# 6. ERROR HANDLING & FALLBACK PAGES
+# ==============================================================================
+error_pages:
+  - codes: [404]
+    response_mode: "custom_file" # custom_file | redirect | json
+    path: "/var/www/errors/404.html"
+  - codes: [500, 502, 503, 504]
+    response_mode: "json"
+    content: '{"error": "service_unavailable", "code": 503}'
+
+# ==============================================================================
+# 7. LOGGING & TELEMETRY
+# ==============================================================================
+telemetry:
+  access_log:
+    path: "/var/log/server/{site_id}.access.log"
+    format: "combined" # json | combined | ltsv
+    exclude_paths:
+      - "/healthz"
+      - "/metrics"
+  error_log:
+    path: "/var/log/server/{site_id}.error.log"
+    level: "warn"

@@ -1,0 +1,136 @@
+version: "1.0"
+service: "dns"
+
+# ==============================================================================
+# GLOBAL RESOLUTION & FORWARDING POLICIES
+# ==============================================================================
+global_policy:
+  recursion:
+    enabled: true
+    allow_recursion:
+      - "127.0.0.1/32"
+      - "10.0.0.0/8"
+      - "192.168.1.0/24"
+  forwarding:
+    mode: "only" # only (strict forwarder) | first (fallback to root) | off
+    forwarders:
+      - "1.1.1.1"
+      - "8.8.8.8"
+  dnssec:
+    validation: "auto" # auto | yes | no
+  rate_limiting:
+    responses_per_second: 50
+    slip: 2
+
+# ==============================================================================
+# ACCESS CONTROL LISTS (ACLs)
+# ==============================================================================
+acls:
+  - id: "internal_lan"
+    entries: ["10.0.0.0/8", "192.168.0.0/16"]
+  - id: "secondary_nameservers"
+    entries: ["198.51.100.2", "198.51.100.3"]
+
+# ==============================================================================
+# VIEWS (Split-Horizon / Split-Brain DNS)
+# ==============================================================================
+views:
+  - id: "internal"
+    match_clients: ["internal_lan"]
+    recursion: true
+    zone_refs: ["example.internal", "corp.example.com"]
+
+  - id: "external"
+    match_clients: ["any"]
+    recursion: false
+    zone_refs: ["example.com"]
+
+# ==============================================================================
+# ZONE DEFINITIONS & RR (RESOURCE RECORD) SETS
+# ==============================================================================
+zones:
+  - domain: "example.com"
+    type: "primary" # primary (master) | secondary (slave) | forward
+    file_origin: "example.com."
+    
+    # Zone-level Transfer & Notify Controls
+    transfer_policy:
+      allow_transfer: ["secondary_nameservers"]
+      allow_notify: ["secondary_nameservers"]
+      also_notify: ["198.51.100.2"]
+
+    # Default TTL and SOA Configuration
+    soa:
+      primary_ns: "ns1.example.com."
+      contact_email: "hostmaster.example.com." # transformed to hostmaster@
+      serial_policy: "unixtime" # unixtime | date_counter | auto_increment
+      refresh: 3600
+      retry: 600
+      expire: 1209600
+      negative_ttl: 300
+    default_ttl: 3600
+
+    # Concrete DNS Records
+    records:
+      # Apex / Root
+      - name: "@"
+        type: "A"
+        ttl: 300
+        values: ["203.0.113.10", "203.0.113.11"]
+      - name: "@"
+        type: "AAAA"
+        values: ["2001:db8::10"]
+      - name: "@"
+        type: "NS"
+        values: ["ns1.example.com.", "ns2.example.com."]
+      - name: "@"
+        type: "MX"
+        values:
+          - priority: 10
+            host: "mail1.example.com."
+          - priority: 20
+            host: "mail2.example.com."
+      - name: "@"
+        type: "TXT"
+        values: ["v=spf1 mx include:_spf.google.com ~all"]
+
+      # Infrastructure & Subdomains
+      - name: "ns1"
+        type: "A"
+        values: ["203.0.113.2"]
+      - name: "ns2"
+        type: "A"
+        values: ["198.51.100.2"]
+      - name: "mail1"
+        type: "A"
+        values: ["203.0.113.25"]
+      - name: "api"
+        type: "CNAME"
+        ttl: 60
+        values: ["app-balancer.aws.example.com."]
+      - name: "_sip._tcp"
+        type: "SRV"
+        values:
+          - priority: 10
+            weight: 60
+            port: 5060
+            target: "sip1.example.com."
+
+  # Reverse Lookup Zone
+  - domain: "113.0.203.in-addr.arpa"
+    type: "primary"
+    soa:
+      primary_ns: "ns1.example.com."
+      contact_email: "hostmaster.example.com."
+      refresh: 3600
+      retry: 600
+      expire: 1209600
+      negative_ttl: 300
+    default_ttl: 86400
+    records:
+      - name: "10"
+        type: "PTR"
+        values: ["example.com."]
+      - name: "25"
+        type: "PTR"
+        values: ["mail1.example.com."]

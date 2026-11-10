@@ -1,0 +1,46 @@
+version: "1.0"
+service: "directory"
+realm: "CORP.EXAMPLE.COM"
+
+# Domain & Functional Level
+domain:
+  netbios_name: "CORP"
+  forest_level: "2012_R2"
+  domain_level: "2012_R2"
+  dns_backend: "bind9_dlz" # internal | bind9_dlz
+
+# Password & Account Lockout Policies
+policies:
+  password:
+    min_length: 12
+    complexity_enabled: true
+    history_length: 5
+    max_age_days: 90
+    min_age_days: 1
+  account_lockout:
+    threshold_attempts: 5
+    lockout_duration_minutes: 30
+    reset_counter_minutes: 30
+
+# Organizational Units (Tree Hierarchy)
+organizational_units:
+  - dn: "OU=Engineering,DC=corp,DC=example,DC=com"
+  - dn: "OU=Finance,DC=corp,DC=example,DC=com"
+
+# Security Groups
+groups:
+  - name: "DevOps_Admins"
+    ou: "OU=Engineering,DC=corp,DC=example,DC=com"
+    type: "security" # security | distribution
+    scope: "global"   # global | universal | domain_local
+
+# Declarative Accounts
+users:
+  - sam_account_name: "jdoe"
+    user_principal_name: "jdoe@corp.example.com"
+    first_name: "John"
+    last_name: "Doe"
+    email: "jdoe@example.com"
+    ou: "OU=Engineering,DC=corp,DC=example,DC=com"
+    groups: ["DevOps_Admins"]
+    require_password_change: false

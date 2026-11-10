@@ -1,0 +1,40 @@
+version: "1.0"
+service: "antiddos"
+
+# Layer 3 / 4 Volumetric Protection (Kernel & Hardware Offload)
+transport_layer_defense:
+  syn_flood_protection:
+    mode: "synproxy" # synproxy | syncookies | rate_limit
+    threshold_packets_per_sec: 10000
+
+  udp_flood_policing:
+    default_action: "drop"
+    allowed_protocols:
+      - port: 53
+        protocol: "udp"
+        rate_limit_per_source: "20/s"
+        burst: 50
+
+  connection_limits:
+    max_concurrent_connections_per_ip: 50
+    action: "drop"
+
+# Layer 7 Application Flood Defense
+application_layer_defense:
+  burst_protection:
+    path: "/"
+    rate_limit: "200/second"
+    burst: 100
+    action: "js_challenge" # js_challenge | captcha | drop | tarpit
+
+  slowloris_defense:
+    min_data_rate_bytes_per_sec: 500
+    header_read_timeout: 5s
+    body_read_timeout: 10s
+    action: "reset_connection"
+
+# Automated IP Mitigation & Isolation
+blackhole:
+  auto_isolate: true
+  quarantine_duration: 3600s
+  sync_to_kernel: "ebpf" # Compile dynamic IP drops straight to XDP/eBPF

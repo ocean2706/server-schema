@@ -1,0 +1,82 @@
+site:
+  id: "app-production"
+  enabled: true
+
+  # 1. Ingress & Identity
+  ingress:
+    primary_domain: "example.com"
+    aliases:
+      - "www.example.com"
+    listen:
+      - port: 80
+        protocol: http
+        redirect_to_https: true
+      - port: 443
+        protocol: https
+
+  # 2. TLS / Certificates
+  tls:
+    mode: "acme" # acme | manual | off
+    provider: "letsencrypt"
+    # If manual:
+    # certificate: "/etc/ssl/certs/example.crt"
+    # private_key: "/etc/ssl/private/example.key"
+    hsts:
+      enabled: true
+      max_age: 31536000
+
+  # 3. Routes & Execution Engines
+  routes:
+    # Static Assets Route
+    - path: "/static"
+      match_type: "prefix" # exact | prefix | regex
+      engine:
+        type: "static"
+        root: "/var/www/example/public/static"
+        directory_index: false
+      caching:
+        max_age: 86400
+
+    # Reverse Proxy Route (APIs / Node / Python / Go)
+    - path: "/api"
+      match_type: "prefix"
+      engine:
+        type: "proxy"
+        upstream: "http://127.0.0.1:8000"
+        websocket: false
+        preserve_host: true
+        timeouts:
+          connect: 5s
+          read: 60s
+
+    # Dynamic Runtime Route (PHP-FPM / FastCGI / WSGI)
+    - path: "/"
+      match_type: "prefix"
+      engine:
+        type: "fastcgi"
+        socket: "unix:/run/php/php8.2-fpm.sock" # or "127.0.0.1:9000"
+        root: "/var/www/example/public"
+        index: "index.php"
+        pass_request_headers: true
+
+  # 4. Access & Security Policies
+  access:
+    allow:
+      - "10.0.0.0/8"
+      - "192.168.1.0/24"
+    deny:
+      - "all"
+    basic_auth:
+      enabled: false
+      realm: "Restricted Area"
+      credentials_file: "/etc/auth/app.htpasswd"
+
+  # 5. Headers & Logging
+  headers:
+    response_add:
+      X-Frame-Options: "DENY"
+      X-Content-Type-Options: "nosniff"
+  logging:
+    access_log: "/var/log/sites/example.access.log"
+    error_log: "/var/log/sites/example.error.log"
+    level: "warn"

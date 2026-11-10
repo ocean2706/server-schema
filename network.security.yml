@@ -1,0 +1,68 @@
+version: "1.0"
+service: "firewall_l4"
+
+defaults:
+  input_policy: "drop"    # drop | reject | accept
+  forward_policy: "drop"
+  output_policy: "accept"
+
+# Stateful connection tracking baseline
+conntrack:
+  allow_established_related: true
+  drop_invalid: true
+
+# Reusable IP/Port sets (mapped to nftables sets or ipset)
+sets:
+  admin_ips:
+    type: "ipv4_addr"
+    entries: ["192.168.1.100", "10.10.0.0/16"]
+  web_ports:
+    type: "inet_service"
+    entries: [80, 443]
+
+# Network Interfaces
+interfaces:
+  wan: ["eth0"]
+  lan: ["eth1"]
+
+rules:
+  # Loopback
+  - id: "allow-loopback"
+    in_interface: "lo"
+    action: "accept"
+
+  # ICMP Management
+  - id: "rate-limit-icmp"
+    protocol: "icmp"
+    icmp_types: ["echo-request"]
+    rate_limit: "5/second"
+    burst: 10
+    action: "accept"
+
+  # Ingress Services
+  - id: "public-web"
+    in_interface: "wan"
+    protocol: "tcp"
+    dest_ports: "@web_ports"
+    action: "accept"
+
+  - id: "ssh-restricted"
+    in_interface: "wan"
+    protocol: "tcp"
+    dest_ports: [22]
+    source_ips: "@admin_ips"
+    action: "accept"
+
+  # NAT / Port Forwarding
+  nat:
+    source_nat: # Masquerading
+      - out_interface: "wan"
+        source_subnet: "10.10.0.0/16"
+        action: "masquerade"
+    dest_nat: # Port forward
+      - in_interface: "wan"
+        protocol: "tcp"
+        dest_port: 8080
+        redirect_to:
+          ip: "10.10.0.50"
+          port: 80

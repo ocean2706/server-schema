@@ -1,0 +1,58 @@
+version: "1.0"
+service: "waf"
+waf_id: "edge-waf-main"
+
+engine:
+  mode: "active" # active (block) | detection_only (log only)
+  inspect_request_body: true
+  max_body_inspection_size: "16MB"
+
+# Pre-packaged Core Rule Sets (CRS)
+rulesets:
+  - id: "owasp_crs"
+    enabled: true
+    version: "v4.0.0"
+    paranoia_level: 2 # 1 (loose) to 4 (strict)
+    anomaly_threshold: 5 # cumulative score to trigger block
+    categories:
+      sqli: true
+      xss: true
+      rce: true
+      lfi_rfi: true
+      session_fixation: true
+      java_deserialization: true
+
+# Rule Exceptions / Exclusions
+exclusions:
+  - id: "allow-rich-text-admin"
+    description: "Bypass XSS checks on CMS admin markdown editor"
+    match:
+      path: "^/admin/articles/.*"
+      method: "POST"
+    targets:
+      - rule_family: "xss"
+        parameters: ["article_body", "raw_html"]
+
+# Custom L7 Interception Rules
+custom_rules:
+  - id: "block-bad-scanners"
+    action: "deny"
+    status_code: 403
+    match:
+      operator: "or"
+      conditions:
+        - target: "header.user_agent"
+          operator: "contains_any"
+          values: ["sqlmap", "nikto", "nmap", "masscan"]
+        - target: "request_uri"
+          operator: "regex"
+          values: ["^/\\.env", "^/wp-config\\.php", "^/\\.git/"]
+
+  - id: "restrict-api-token-bruteforce"
+    action: "challenge" # block | drop | allow | challenge (captcha/js)
+    match:
+      path: "/api/v1/auth/login"
+      method: "POST"
+    trigger:
+      rate: "5/minute"
+      key: "request.ip"
